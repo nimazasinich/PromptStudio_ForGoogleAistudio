@@ -491,6 +491,66 @@ app.post("/api/sessions", (req, res) => {
   res.status(201).json(newSession);
 });
 
+// Rename a session
+app.patch("/api/sessions/:id", (req, res) => {
+  const { id } = req.params;
+  const { name } = req.body;
+  const sess = sessionsState[id];
+  if (!sess) {
+    return res.status(404).json({ error: "Session not found" });
+  }
+  if (name !== undefined) {
+    sess.name = (name as string).trim() || sess.name;
+  }
+  sess.updatedAt = new Date().toISOString();
+  saveStateToDisk();
+  res.json({ success: true, session: sess });
+});
+
+// Apply a pre-built PromptDefinition to a session (used by HuggingFace template picker and similar flows)
+app.post("/api/sessions/:id/apply-prompt", (req, res) => {
+  const { id } = req.params;
+  const { promptDefinition, historyMessage } = req.body;
+
+  if (!promptDefinition) {
+    return res.status(400).json({ error: "Missing promptDefinition payload." });
+  }
+
+  const sess = sessionsState[id];
+  if (!sess) {
+    return res.status(404).json({ error: "Session not found" });
+  }
+
+  const now = new Date().toISOString();
+  const pData: PromptDefinition = {
+    ...promptDefinition,
+    id: "pdef_" + Math.random().toString(36).substr(2, 9),
+    version: (sess.currentPrompt?.version || 0) + 1,
+    createdAt: now,
+  };
+
+  sess.currentPrompt = pData;
+  sess.versionHistory.push(pData);
+
+  const histItem: PromptHistoryItem = {
+    id: "hist_" + Math.random().toString(36).substr(2, 9),
+    role: "assistant",
+    content: historyMessage || `Prompt applied (v${pData.version}). Overall score: **${pData.scores?.overall ?? "N/A"}/100**.`,
+    timestamp: now,
+    type: "optimize",
+    metadata: {
+      optimizedPrompt: pData,
+      extractedVariables: pData.variables,
+    },
+  };
+
+  sess.history.push(histItem);
+  sess.updatedAt = now;
+  saveStateToDisk();
+
+  res.json({ success: true, session: sess, prompt: pData });
+});
+
 // Select prompt version from history
 app.post("/api/sessions/:id/version", (req, res) => {
   const { id } = req.params;
@@ -549,7 +609,8 @@ function constructRAGContext(promptIdea: string): string {
 
 // POST endpoint: Full prompt optimization and creation
 app.post("/api/prompt/optimize", async (req, res) => {
-  const { promptIdea, contextDoc, sessionId } = req.body;
+  const { promptIdea, contextDoc, sessionId, model: requestedOptimizeModel } = req.body;
+  const optimizeModel = requestedOptimizeModel || "gemini-3.5-flash";
   if (!promptIdea) {
     return res.status(400).json({ error: "Missing promptIdea parameter." });
   }
@@ -577,7 +638,7 @@ ${contextDoc ? `USER ATTACHED GROUNDING DOCUMENT CONTENT:\n${contextDoc}\n` : ""
     const userMessage = `Optimize this prompt goal: "${promptIdea}"`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: optimizeModel,
       contents: userMessage,
       config: {
         systemInstruction: optimizationSystemInstruction,
@@ -692,7 +753,7 @@ ${contextDoc ? `USER ATTACHED GROUNDING DOCUMENT CONTENT:\n${contextDoc}\n` : ""
 // POST endpoint: Continuous chat within session to tweak / alter prompt
 app.post("/api/sessions/:id/chat", async (req, res) => {
   const sessId = req.params.id;
-  const { message, imageBase64 } = req.body;
+  const { message, imageBase64, mimeType, model: requestedModel } = req.body;
   const sess = sessionsState[sessId];
 
   if (!sess) {
@@ -746,35 +807,42 @@ If you generate an updated prompt version inside your output, format it cleanly.
 ${currentPromptState}
 `;
 
-    // Package conversational history for Gemini
-    const contentsPayload: any[] = sess.history.map((h) => ({
-      role: h.role === "assistant" ? "model" : "user",
-      parts: [{ text: h.content }],
-    }));
+    // Build Gemini-compatible multi-turn contents from persisted session history.
+    // System-role messages are excluded (they belong in systemInstruction).
+    // Consecutive same-role turns are merged to comply with Gemini's alternating requirement.
+    const geminiContents: any[] = [];
+    for (const h of sess.history) {
+      if (h.role === "system") continue;
+      const role = h.role === "assistant" ? "model" : "user";
+      const parts: any[] = [{ text: h.content }];
+      if (geminiContents.length > 0 && geminiContents[geminiContents.length - 1].role === role) {
+        geminiContents[geminiContents.length - 1].parts.push(...parts);
+      } else {
+        geminiContents.push({ role, parts });
+      }
+    }
 
-    // Append image if provided
-    if (imageBase64) {
-      contentsPayload[contentsPayload.length - 1].parts.push({
+    // Attach image to the last user turn if provided
+    if (imageBase64 && geminiContents.length > 0 && geminiContents[geminiContents.length - 1].role === "user") {
+      geminiContents[geminiContents.length - 1].parts.push({
         inlineData: {
-          mimeType: "image/png",
+          mimeType: mimeType || "image/jpeg",
           data: imageBase64,
         },
       });
     }
 
-    // Call Gemini with schema instructions for structured updates
+    // Fallback: ensure at least one user turn exists
+    if (geminiContents.length === 0) {
+      geminiContents.push({ role: "user", parts: [{ text: message }] });
+    }
+
+    const chatModel = requestedModel || "gemini-3.5-flash";
+
+    // Call Gemini with full conversation history for multi-turn awareness
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `Active instructions: Adjust the existing prompt structure based on: "${message}". If the prompt was updated, output the complete new prompt layout. Otherwise, reply conversationally.`,
-            },
-          ],
-        },
-      ],
+      model: chatModel,
+      contents: geminiContents,
       config: {
         systemInstruction: dialogSystemInstruction,
         // We will request JSON schema containing a 'chattext' parameter alongside an optional 'updatedPrompt' block
@@ -1070,9 +1138,10 @@ app.post("/api/prompt/run-tests", async (req, res) => {
     }
 
     const testRunsOutputs: any[] = [];
-    const modelsToExecuteQuery: string[] = (models && Array.isArray(models) && models.length > 0) 
-      ? models 
-      : ["gemini-3.5-flash"];
+    const { model: defaultTestModel } = req.body;
+    const modelsToExecuteQuery: string[] = (models && Array.isArray(models) && models.length > 0)
+      ? models
+      : [defaultTestModel || "gemini-3.5-flash"];
 
     // Run each scenario sequentially
     for (const scenario of scenariosToRun) {
