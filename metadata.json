@@ -1,0 +1,6 @@
+{
+  "name": "Prompt Studio",
+  "description": "A state-of-the-art Prompt Engineering application for Google AI Studio to craft, test, score, and optimize high-performance prompts.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
