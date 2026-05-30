@@ -753,7 +753,7 @@ ${contextDoc ? `USER ATTACHED GROUNDING DOCUMENT CONTENT:\n${contextDoc}\n` : ""
 // POST endpoint: Continuous chat within session to tweak / alter prompt
 app.post("/api/sessions/:id/chat", async (req, res) => {
   const sessId = req.params.id;
-  const { message, imageBase64 } = req.body;
+  const { message, imageBase64, mimeType, model: requestedModel } = req.body;
   const sess = sessionsState[sessId];
 
   if (!sess) {
@@ -807,35 +807,42 @@ If you generate an updated prompt version inside your output, format it cleanly.
 ${currentPromptState}
 `;
 
-    // Package conversational history for Gemini
-    const contentsPayload: any[] = sess.history.map((h) => ({
-      role: h.role === "assistant" ? "model" : "user",
-      parts: [{ text: h.content }],
-    }));
+    // Build Gemini-compatible multi-turn contents from persisted session history.
+    // System-role messages are excluded (they belong in systemInstruction).
+    // Consecutive same-role turns are merged to comply with Gemini's alternating requirement.
+    const geminiContents: any[] = [];
+    for (const h of sess.history) {
+      if (h.role === "system") continue;
+      const role = h.role === "assistant" ? "model" : "user";
+      const parts: any[] = [{ text: h.content }];
+      if (geminiContents.length > 0 && geminiContents[geminiContents.length - 1].role === role) {
+        geminiContents[geminiContents.length - 1].parts.push(...parts);
+      } else {
+        geminiContents.push({ role, parts });
+      }
+    }
 
-    // Append image if provided
-    if (imageBase64) {
-      contentsPayload[contentsPayload.length - 1].parts.push({
+    // Attach image to the last user turn if provided
+    if (imageBase64 && geminiContents.length > 0 && geminiContents[geminiContents.length - 1].role === "user") {
+      geminiContents[geminiContents.length - 1].parts.push({
         inlineData: {
-          mimeType: "image/png",
+          mimeType: mimeType || "image/jpeg",
           data: imageBase64,
         },
       });
     }
 
-    // Call Gemini with schema instructions for structured updates
+    // Fallback: ensure at least one user turn exists
+    if (geminiContents.length === 0) {
+      geminiContents.push({ role: "user", parts: [{ text: message }] });
+    }
+
+    const chatModel = requestedModel || "gemini-3.5-flash";
+
+    // Call Gemini with full conversation history for multi-turn awareness
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `Active instructions: Adjust the existing prompt structure based on: "${message}". If the prompt was updated, output the complete new prompt layout. Otherwise, reply conversationally.`,
-            },
-          ],
-        },
-      ],
+      model: chatModel,
+      contents: geminiContents,
       config: {
         systemInstruction: dialogSystemInstruction,
         // We will request JSON schema containing a 'chattext' parameter alongside an optional 'updatedPrompt' block
