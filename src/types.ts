@@ -56,6 +56,7 @@ export interface PromptHistoryItem {
     testRuns?: {
       scenarioName: string;
       inputs: Record<string, string>;
+      model?: string;
       output: string;
       evalVerdict: 'pass' | 'fail' | 'partial';
       score: number;

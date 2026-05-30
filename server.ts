@@ -753,7 +753,7 @@ ${contextDoc ? `USER ATTACHED GROUNDING DOCUMENT CONTENT:\n${contextDoc}\n` : ""
 // POST endpoint: Continuous chat within session to tweak / alter prompt
 app.post("/api/sessions/:id/chat", async (req, res) => {
   const sessId = req.params.id;
-  const { message, imageBase64, mimeType, model: requestedModel } = req.body;
+  const { message, imageBase64, mimeType, contextDoc, model: requestedModel } = req.body;
   const sess = sessionsState[sessId];
 
   if (!sess) {
@@ -763,20 +763,23 @@ app.post("/api/sessions/:id/chat", async (req, res) => {
     return res.status(400).json({ error: "Missing message parameter" });
   }
 
+  // Persist the user message immediately so it survives API key failures or quota errors
+  const persistNow = new Date().toISOString();
+  const userMsgId = "hist_" + Math.random().toString(36).substr(2, 9);
+  const userMsg: PromptHistoryItem = {
+    id: userMsgId,
+    role: "user",
+    content: message,
+    timestamp: persistNow,
+    type: "chat",
+  };
+  sess.history.push(userMsg);
+  sess.updatedAt = persistNow;
+  saveStateToDisk();
+
   try {
     const ai = getGeminiClient();
-    const now = new Date().toISOString();
-
-    // Log user chat message
-    const userMsgId = "hist_" + Math.random().toString(36).substr(2, 9);
-    const userMsg: PromptHistoryItem = {
-      id: userMsgId,
-      role: "user",
-      content: message,
-      timestamp: now,
-      type: "chat",
-    };
-    sess.history.push(userMsg);
+    const now = persistNow;
 
     // Prepare systemic prompt manager context
     const currentPromptState = sess.currentPrompt
@@ -805,7 +808,7 @@ DETERMINE USER INTENT:
 If you generate an updated prompt version inside your output, format it cleanly. Make sure safety, clarity, edge-case coverage, and token limits are fully reinforced.
 
 ${currentPromptState}
-`;
+${contextDoc ? `\nGROUNDING DOCUMENT PROVIDED BY USER:\n"""\n${contextDoc}\n"""\n` : ""}`;
 
     // Build Gemini-compatible multi-turn contents from persisted session history.
     // System-role messages are excluded (they belong in systemInstruction).
@@ -948,7 +951,8 @@ ${currentPromptState}
 // POST endpoint: Google AI feedback processor
 // paste a disappointing real-life output from AI Studio along with instructions to diagnose and auto-rewrite!
 app.post("/api/prompt/analyze-feedback", async (req, res) => {
-  const { sessionId, originalPrompt, pastedOutput, expectation } = req.body;
+  const { sessionId, originalPrompt, pastedOutput, expectation, model: requestedFeedbackModel } = req.body;
+  const feedbackModel = requestedFeedbackModel || "gemini-3.5-flash";
   if (!pastedOutput) {
     return res.status(400).json({ error: "Missing pasted disappointing output data." });
   }
@@ -982,7 +986,7 @@ USER'S CORRECT SPECIFICATION / EXPECTATION:
 `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: feedbackModel,
       contents: payload,
       config: {
         systemInstruction,
@@ -1098,7 +1102,8 @@ app.post("/api/prompt/run-tests", async (req, res) => {
   try {
     const ai = getGeminiClient();
     const activePrompt: PromptDefinition = promptDefinition;
-    
+    const { model: defaultTestModel } = req.body;
+
     // Auto-generate test cases if none provided to keep loop friction-free and fully autonomous
     let scenariosToRun: TestScenario[] = testScenarios || [];
     
@@ -1106,7 +1111,7 @@ app.post("/api/prompt/run-tests", async (req, res) => {
       const testGenSystem = `You are a strict QA engineer validating AI Studio prompt configurations. Generate exactly three robust test inputs for a prompt template that takes the following variables: ${JSON.stringify(activePrompt.variables)}. Each test case should specifically target different edge conditions, complex/challenging requests, or invalid inputs. Ensure output structure adheres strictly to the schema.`;
       
       const genResponse = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: defaultTestModel || "gemini-3.5-flash",
         contents: `Create robust evaluation cases for: System: "${activePrompt.systemInstruction}" and Template: "${activePrompt.userTemplate}"`,
         config: {
           systemInstruction: testGenSystem,
@@ -1138,7 +1143,6 @@ app.post("/api/prompt/run-tests", async (req, res) => {
     }
 
     const testRunsOutputs: any[] = [];
-    const { model: defaultTestModel } = req.body;
     const modelsToExecuteQuery: string[] = (models && Array.isArray(models) && models.length > 0)
       ? models
       : [defaultTestModel || "gemini-3.5-flash"];
@@ -1221,7 +1225,7 @@ ${JSON.stringify(scenario.expectedCriteria)}
 `;
 
             const evalResponse = await ai.models.generateContent({
-              model: "gemini-3.5-flash",
+              model: defaultTestModel || "gemini-3.5-flash",
               contents: evalPrompt,
               config: {
                 systemInstruction: critEvalSystem,
