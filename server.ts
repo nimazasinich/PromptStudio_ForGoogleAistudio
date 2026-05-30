@@ -491,6 +491,66 @@ app.post("/api/sessions", (req, res) => {
   res.status(201).json(newSession);
 });
 
+// Rename a session
+app.patch("/api/sessions/:id", (req, res) => {
+  const { id } = req.params;
+  const { name } = req.body;
+  const sess = sessionsState[id];
+  if (!sess) {
+    return res.status(404).json({ error: "Session not found" });
+  }
+  if (name !== undefined) {
+    sess.name = (name as string).trim() || sess.name;
+  }
+  sess.updatedAt = new Date().toISOString();
+  saveStateToDisk();
+  res.json({ success: true, session: sess });
+});
+
+// Apply a pre-built PromptDefinition to a session (used by HuggingFace template picker and similar flows)
+app.post("/api/sessions/:id/apply-prompt", (req, res) => {
+  const { id } = req.params;
+  const { promptDefinition, historyMessage } = req.body;
+
+  if (!promptDefinition) {
+    return res.status(400).json({ error: "Missing promptDefinition payload." });
+  }
+
+  const sess = sessionsState[id];
+  if (!sess) {
+    return res.status(404).json({ error: "Session not found" });
+  }
+
+  const now = new Date().toISOString();
+  const pData: PromptDefinition = {
+    ...promptDefinition,
+    id: "pdef_" + Math.random().toString(36).substr(2, 9),
+    version: (sess.currentPrompt?.version || 0) + 1,
+    createdAt: now,
+  };
+
+  sess.currentPrompt = pData;
+  sess.versionHistory.push(pData);
+
+  const histItem: PromptHistoryItem = {
+    id: "hist_" + Math.random().toString(36).substr(2, 9),
+    role: "assistant",
+    content: historyMessage || `Prompt applied (v${pData.version}). Overall score: **${pData.scores?.overall ?? "N/A"}/100**.`,
+    timestamp: now,
+    type: "optimize",
+    metadata: {
+      optimizedPrompt: pData,
+      extractedVariables: pData.variables,
+    },
+  };
+
+  sess.history.push(histItem);
+  sess.updatedAt = now;
+  saveStateToDisk();
+
+  res.json({ success: true, session: sess, prompt: pData });
+});
+
 // Select prompt version from history
 app.post("/api/sessions/:id/version", (req, res) => {
   const { id } = req.params;
@@ -549,7 +609,8 @@ function constructRAGContext(promptIdea: string): string {
 
 // POST endpoint: Full prompt optimization and creation
 app.post("/api/prompt/optimize", async (req, res) => {
-  const { promptIdea, contextDoc, sessionId } = req.body;
+  const { promptIdea, contextDoc, sessionId, model: requestedOptimizeModel } = req.body;
+  const optimizeModel = requestedOptimizeModel || "gemini-3.5-flash";
   if (!promptIdea) {
     return res.status(400).json({ error: "Missing promptIdea parameter." });
   }
@@ -577,7 +638,7 @@ ${contextDoc ? `USER ATTACHED GROUNDING DOCUMENT CONTENT:\n${contextDoc}\n` : ""
     const userMessage = `Optimize this prompt goal: "${promptIdea}"`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: optimizeModel,
       contents: userMessage,
       config: {
         systemInstruction: optimizationSystemInstruction,
@@ -1070,9 +1131,10 @@ app.post("/api/prompt/run-tests", async (req, res) => {
     }
 
     const testRunsOutputs: any[] = [];
-    const modelsToExecuteQuery: string[] = (models && Array.isArray(models) && models.length > 0) 
-      ? models 
-      : ["gemini-3.5-flash"];
+    const { model: defaultTestModel } = req.body;
+    const modelsToExecuteQuery: string[] = (models && Array.isArray(models) && models.length > 0)
+      ? models
+      : [defaultTestModel || "gemini-3.5-flash"];
 
     // Run each scenario sequentially
     for (const scenario of scenariosToRun) {

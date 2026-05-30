@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: Apache-2.5
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { 
   Plus, MessageSquare, Send, Sparkles, Upload, FileText, X, 
   Settings, CheckCircle, AlertTriangle, Layers, Info, Trash2, ShieldAlert
 } from "lucide-react";
+import { classifyMessageIntent, INTENT_STYLE } from "./utils/intentClassifier";
 import { 
   PromptSession, PromptDefinition, EcosystemIntegrationState, 
   TestScenario, PromptHistoryItem, UserProfile 
@@ -66,6 +67,7 @@ export default function App() {
   const [groundingDocName, setGroundingDocName] = useState<string>("");
   const [uploadedImageBase64, setUploadedImageBase64] = useState<string>("");
   const [uploadedImageName, setUploadedImageName] = useState<string>("");
+  const [uploadedImageMimeType, setUploadedImageMimeType] = useState<string>("image/jpeg");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -187,6 +189,7 @@ export default function App() {
           promptIdea: promptIdeaInput,
           contextDoc: groundingDocContent,
           sessionId: activeSessionId,
+          model: preferredModel,
         }),
       });
 
@@ -221,6 +224,8 @@ export default function App() {
         body: JSON.stringify({
           message: promptIdeaInput,
           imageBase64: uploadedImageBase64 || undefined,
+          mimeType: uploadedImageBase64 ? uploadedImageMimeType : undefined,
+          model: preferredModel,
         }),
       });
 
@@ -228,6 +233,7 @@ export default function App() {
         setPromptIdeaInput("");
         setUploadedImageBase64("");
         setUploadedImageName("");
+        setUploadedImageMimeType("image/jpeg");
         loadSessions(activeSessionId);
       } else {
         const errData = await response.json();
@@ -262,10 +268,13 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (event) => {
       const fullData = event.target?.result as string;
-      // Extract base64 segment by stripping mime headers
+      // Extract MIME type from the data URL header (e.g. "data:image/jpeg;base64,...")
+      const mimeMatch = fullData.match(/^data:([^;]+);base64,/);
+      const detectedMime = mimeMatch ? mimeMatch[1] : file.type || "image/jpeg";
       const base64Str = fullData.split(",")[1];
       setUploadedImageBase64(base64Str);
       setUploadedImageName(file.name);
+      setUploadedImageMimeType(detectedMime);
     };
     reader.readAsDataURL(file);
   };
@@ -282,12 +291,12 @@ export default function App() {
     setIsCompiling(true);
 
     try {
-      const activeDef: PromptDefinition = {
+      const promptDef: PromptDefinition = {
         id: "pdef_" + Math.random().toString(36).substr(2, 9),
         version: 1,
         systemInstruction: tmpl.systemInstruction,
         userTemplate: tmpl.userTemplate,
-        variables: tmpl.variables,
+        variables: tmpl.variables || [],
         examples: [
           { id: "ex_1", input: "Generate custom classifications values...", output: "{\"classification_status\": \"success\"}" }
         ],
@@ -301,18 +310,20 @@ export default function App() {
         }
       };
 
-      const pushResponse = await fetch(`/api/sessions/${activeSessionId}/chat`, {
+      // Apply the template to the active session via the dedicated endpoint
+      const applyResponse = await fetch(`/api/sessions/${activeSessionId}/apply-prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: `Pulled trending Hugging Face template: ${tmpl.name}`,
+          promptDefinition: promptDef,
+          historyMessage: `Imported Hugging Face template **${tmpl.name}** by *${tmpl.author || "community"}*. Overall score: **${promptDef.scores.overall}/100**.\n\nYou can now chat to customize this template or run tests directly.`,
         }),
       });
 
-      if (pushResponse.ok) {
-        // Manually push to state version files
-        const data = await pushResponse.json();
+      if (applyResponse.ok) {
         loadSessions(activeSessionId);
+      } else {
+        setErrorMessage("Failed to deploy Hugging Face template.");
       }
     } catch {
       setErrorMessage("Failed to deploy Hugging Face template.");
@@ -338,6 +349,7 @@ export default function App() {
           promptDefinition: activeSession.currentPrompt,
           testScenarios: customScenariosSpec || [],
           models: targetModels || [],
+          model: preferredModel,
         }),
       });
 
@@ -396,6 +408,12 @@ export default function App() {
   };
 
   const activeSess = getActiveSession();
+
+  // Derive intent classification whenever the input or active prompt changes
+  const detectedIntent = useMemo(() => {
+    if (!promptIdeaInput.trim()) return null;
+    return classifyMessageIntent(promptIdeaInput, Boolean(activeSess?.currentPrompt));
+  }, [promptIdeaInput, activeSess?.currentPrompt]);
 
   return (
     <div className={`flex h-screen w-screen overflow-hidden bg-[#040910] bg-cyber-grid font-sans antialiased text-[#EDF2FF] density-${uiScale}`}>
@@ -518,12 +536,22 @@ export default function App() {
                       <div className="flex items-center gap-1.5 rounded-xl bg-amber-500/10 px-3.5 py-1.5 text-3xs font-mono uppercase tracking-wider text-amber-400 border border-amber-500/20">
                         <Upload className="h-3 w-3 text-amber-400" />
                         <span className="truncate max-w-[140px]">{uploadedImageName}</span>
-                        <button onClick={() => { setUploadedImageName(""); setUploadedImageBase64(""); }} className="hover:bg-white/10 rounded p-0.5 ml-1 cursor-pointer">
+                        <button onClick={() => { setUploadedImageName(""); setUploadedImageBase64(""); setUploadedImageMimeType("image/jpeg"); }} className="hover:bg-white/10 rounded p-0.5 ml-1 cursor-pointer">
                           <X className="h-2.5 w-2.5" />
                         </button>
                       </div>
                     )}
                   </div>
+
+                  {/* Intent classification badge — shown when user is typing */}
+                  {detectedIntent && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] font-mono text-[#9BAAD4]/40 uppercase tracking-widest">Detected:</span>
+                      <span className={`text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${INTENT_STYLE[detectedIntent.intent]}`}>
+                        {detectedIntent.label}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Message Input text areas buttons */}
                   <form onSubmit={handleSendChatMessage} className="flex gap-2">
