@@ -36,20 +36,28 @@ export default function RightUtilityRail({
   const constraintsScore = currentPrompt?.scores?.constraintAdherence || 95;
   const efficiencyScore = currentPrompt?.scores?.tokenEfficiency || 91;
 
-  // Active tools monitoring status listing
+  // Platform pipeline labels — "Demo" suffix marks capabilities not tied to live external services
   const PLATFORM_TOOLS = [
-    { name: "Chain-of-Thought Guard", status: "Active", color: "text-[#6CECC8]" },
-    { name: "Constraint Checker", status: "Active", color: "text-[#6CECC8]" },
-    { name: "Edge stress generator", status: "Idle", color: "text-[#9BAAD4]/40" },
-    { name: "Semantic RAG Grounding", status: "Optimized", color: "text-[#79AEFF]" }
+    { name: "Prompt Optimizer", status: currentPrompt ? "Active" : "Idle", color: currentPrompt ? "text-[#6CECC8]" : "text-[#9BAAD4]/40" },
+    { name: "Constraint Checker", status: currentPrompt ? "Active" : "Idle", color: currentPrompt ? "text-[#6CECC8]" : "text-[#9BAAD4]/40" },
+    { name: "Test Suite", status: isRunningTests ? "Running" : "Idle", color: isRunningTests ? "text-amber-400" : "text-[#9BAAD4]/40" },
+    { name: "RAG Grounding", status: "Keyword", color: "text-[#79AEFF]" }
   ];
 
-  // Dynamic status timeline log events mapping
-  const UTILITY_LOGS = [
-    { label: "Instruction optimized", time: "Just now", trait: "complete" },
-    { label: "Grounding context synced", time: "10m ago", trait: "success" },
-    { label: "Scoring metrics audited", time: "25m ago", trait: "info" }
-  ];
+  // Derive last activity log from real session history (most recent 2 assistant turns)
+  const recentHistory = activeSession?.history
+    ? [...activeSession.history]
+        .filter(h => h.role === "assistant" || h.role === "system")
+        .slice(-2)
+        .reverse()
+    : [];
+
+  const UTILITY_LOGS = recentHistory.length > 0
+    ? recentHistory.map((h, i) => ({
+        label: h.content.replace(/\*\*/g, "").replace(/\n/g, " ").slice(0, 42),
+        time: i === 0 ? "Latest" : "Previous",
+      }))
+    : [{ label: "No activity yet in this session", time: "" }];
 
   return (
     <div className={`flex flex-col h-full glass-pane rounded-3xl p-5 select-none justify-between overflow-hidden shadow-sm ${

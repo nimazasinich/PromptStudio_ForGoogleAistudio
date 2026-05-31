@@ -48,6 +48,14 @@ export default function SettingsModal({
   const [, setSelectedDriveFileId] = useState<string | null>(null);
   const [, setSelectedNotebookNotesId] = useState<string | null>(null);
 
+  // Integration status labels — shown in UI to clearly communicate real vs. demo state
+  const INTEGRATION_STATUS = {
+    googleDrive:  { label: "Demo — Not connected to real Google Drive API", badge: "Requires OAuth" },
+    notebookLM:   { label: "Demo — NotebookLM public API unavailable", badge: "API Unavailable" },
+    github:       { label: "Demo — No real GitHub token configured", badge: "Requires GITHUB_TOKEN" },
+    huggingFace:  { label: "Templates apply to active session", badge: "Active" },
+  } as const;
+
   // High-fidelity structures Drive & Notebook files (representing grounding knowledge schemas)
   const GOOGLE_DRIVE_FILES = [
     { id: "gd_policy_gdpr", name: "Client_GDPR_Compliance_Policy.md", size: "24 KB", content: "CRITICAL COMPLIANCE TARGETS:\n- Keep all client data locked within continental boundaries.\n- Delete historic cookies on browser termination.\n- Explicitly cite GDPR article index when answering safety questions." },
@@ -414,6 +422,7 @@ export default function SettingsModal({
                     <div className="flex items-center gap-2">
                       <Cloud className="h-4 w-4 text-[#6CECC8]" />
                       <span className="font-bold text-[#EDF2FF] uppercase tracking-wider text-[10px]">Google Drive Link</span>
+                      <span className="text-[8px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded uppercase">{INTEGRATION_STATUS.googleDrive.badge}</span>
                     </div>
                     <button
                       onClick={() => toggleConnection("googleDrive")}
@@ -458,6 +467,7 @@ export default function SettingsModal({
                     <div className="flex items-center gap-2">
                       <FolderKanban className="h-4 w-4 text-[#B48FFF]" />
                       <span className="font-bold text-[#EDF2FF] uppercase tracking-wider text-[10px]">NotebookLM Sync</span>
+                      <span className="text-[8px] font-mono bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded uppercase">{INTEGRATION_STATUS.notebookLM.badge}</span>
                     </div>
                     <button
                       onClick={() => toggleConnection("notebookLM")}
@@ -501,6 +511,7 @@ export default function SettingsModal({
                     <div className="flex items-center gap-2">
                       <Github className="h-4 w-4 text-white" />
                       <span className="font-bold text-[#EDF2FF] uppercase tracking-wider text-[10px]">GitHub Version Panel</span>
+                      <span className="text-[8px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded uppercase">{INTEGRATION_STATUS.github.badge}</span>
                     </div>
                     <button
                       onClick={() => toggleConnection("github")}

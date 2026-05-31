@@ -72,8 +72,10 @@ export default function Header({
     }
   };
 
-  const overallScore = currentPrompt?.scores?.overall || 94; // Default to 94 if none exists to align with design mockup specs
-  const tokenEfficiency = currentPrompt?.scores?.tokenEfficiency ? `${currentPrompt.scores.tokenEfficiency * 123} tokens` : "12.4k";
+  const overallScore = currentPrompt?.scores?.overall ?? null;
+  const tokenEfficiency = currentPrompt?.scores?.tokenEfficiency
+    ? `~${Math.round(currentPrompt.scores.tokenEfficiency * 12)} toks`
+    : null;
 
   return (
     <header className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-white/5 pb-2 pt-0.5 select-none gap-2">
@@ -154,19 +156,21 @@ export default function Header({
         <div className="flex items-center gap-2 border-r border-white/5 pr-3">
           <div className="flex flex-col items-end">
             <span className="text-base md:text-lg font-bold leading-none text-[#6CECC8] tracking-tight">
-              {overallScore}%
+              {overallScore !== null ? `${overallScore}%` : "—"}
             </span>
-            <span className="text-[8px] font-mono text-[#9BAAD4]/50 uppercase tracking-widest mt-0.5">Optimized</span>
+            <span className="text-[8px] font-mono text-[#9BAAD4]/50 uppercase tracking-widest mt-0.5">{overallScore !== null ? "Optimized" : "No Prompt"}</span>
           </div>
         </div>
 
-        {/* Metric 2 */}
-        <div className="flex flex-col items-end justify-center">
-          <span className="text-base md:text-lg font-semibold leading-none text-[#EDF2FF] tracking-tight">
-            {tokenEfficiency}
-          </span>
-          <span className="text-[8px] font-mono text-[#9BAAD4]/50 uppercase tracking-widest mt-0.5">Token Footprint</span>
-        </div>
+        {/* Metric 2 — only shown when a real prompt with scores exists */}
+        {tokenEfficiency !== null && (
+          <div className="flex flex-col items-end justify-center">
+            <span className="text-base md:text-lg font-semibold leading-none text-[#EDF2FF] tracking-tight">
+              {tokenEfficiency}
+            </span>
+            <span className="text-[8px] font-mono text-[#9BAAD4]/50 uppercase tracking-widest mt-0.5">Token Est.</span>
+          </div>
+        )}
       </div>
     </header>
   );

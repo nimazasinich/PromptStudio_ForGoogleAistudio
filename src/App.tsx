@@ -225,6 +225,7 @@ export default function App() {
           message: promptIdeaInput,
           imageBase64: uploadedImageBase64 || undefined,
           mimeType: uploadedImageBase64 ? uploadedImageMimeType : undefined,
+          contextDoc: groundingDocContent || undefined,
           model: preferredModel,
         }),
       });
@@ -385,6 +386,7 @@ export default function App() {
           originalPrompt: original,
           pastedOutput: badOut,
           expectation: expect,
+          model: preferredModel,
         }),
       });
 
@@ -719,12 +721,12 @@ export default function App() {
               <span>Server: <span className="text-white">ACTIVE</span></span>
             </div>
             <div className="flex items-center gap-1">
-              <div className="w-1 h-1 bg-[#79AEFF] rounded-full shadow-[0_0_4px_#79aeff]"></div>
-              <span>RAG Pipeline: <span className="text-[#79AEFF]">OPTIMIZED</span></span>
+              <div className={`w-1 h-1 rounded-full ${groundingDocContent ? "bg-[#79AEFF] shadow-[0_0_4px_#79aeff]" : "bg-white/20"}`}></div>
+              <span>RAG: <span className={groundingDocContent ? "text-[#79AEFF]" : "text-white/30"}>{groundingDocContent ? "ACTIVE" : "READY"}</span></span>
             </div>
-            <div className="flex items-center gap-1 text-emerald-500">
-              <div className="w-1 h-1 bg-[#6CECC8] rounded-full animate-pulse shadow-[0_0_4px_#6cecc8]"></div>
-              <span>Self-Correction Loop: <span className="font-extrabold uppercase animate-pulse text-[#6CECC8]">RUNNING</span></span>
+            <div className="flex items-center gap-1">
+              <div className={`w-1 h-1 rounded-full ${(isCompiling || isSendingChat || isRunningTests || isAnalyzingFeedback) ? "bg-[#6CECC8] animate-pulse shadow-[0_0_4px_#6cecc8]" : "bg-white/20"}`}></div>
+              <span>Self-Correction: <span className={`font-extrabold uppercase ${(isCompiling || isSendingChat || isRunningTests || isAnalyzingFeedback) ? "animate-pulse text-[#6CECC8]" : "text-white/30"}`}>{(isCompiling || isSendingChat || isRunningTests || isAnalyzingFeedback) ? "RUNNING" : "READY"}</span></span>
             </div>
           </div>
           <div className="text-[9px] uppercase font-mono text-white/35">
